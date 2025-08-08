@@ -1,0 +1,21 @@
+[package]
+name = "fifo-mempool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+futures = { workspace = true }
+libp2p = { workspace = true }
+libp2p-identity = { workspace = true }
+libp2p-network = { path = "../libp2p-network" }
+prometheus = { workspace = true }
+prometheus-client = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+ractor = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
