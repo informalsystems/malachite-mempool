@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use fifo_mempool::{
-    ActorResult, AppResult, CheckTxOutcome, MempoolApp, MempoolEvent, MempoolMsg, RawTx, TxHash,
+    ActorResult, AppResult, CheckTxOutcome, MempoolApp, MempoolEvent, MempoolMsg, RawTx, TxHash, ReapCursor
 };
 
 use libp2p_network::output_port::OutputPortSubscriberTrait;
@@ -12,7 +12,7 @@ pub type AppMsg = Msg;
 
 pub enum Msg {
     MempoolEvent(MempoolEvent),
-    Take { reply: RpcReplyPort<Vec<RawTx>> },
+    Reap { cursor: ReapCursor, reply: RpcReplyPort<Vec<RawTx>> },
     Remove(Vec<TestTxHash>),
 }
 
@@ -20,7 +20,7 @@ impl From<Arc<MempoolEvent>> for Msg {
     fn from(event: Arc<MempoolEvent>) -> Self {
         match Arc::try_unwrap(event) {
             Ok(event) => Msg::MempoolEvent(event),
-            Err(_) => panic!("Cannot unwrap Arc<MempoolEvent> with multiple references"),
+            Err(event_arc) => Msg::MempoolEvent((*event_arc).clone())
         }
     }
 }
@@ -122,8 +122,8 @@ impl Actor for TestMempoolAppActor {
                 let hashes: Vec<TxHash> = hashes.iter().map(|h| h.clone().into()).collect();
                 self.mempool_actor.cast(MempoolMsg::Remove(hashes))?;
             }
-            Msg::Take { reply } => {
-                self.mempool_actor.cast(MempoolMsg::Take { reply })?;
+            Msg::Reap { cursor, reply } => {
+                self.mempool_actor.cast(MempoolMsg::Reap { cursor,  reply })?;
             }
         }
         Ok(())

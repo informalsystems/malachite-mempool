@@ -1,7 +1,4 @@
-use fifo_mempool::{
-    mempool::{spawn_mempool_actor, MempoolConfig, MempoolMsg},
-    RawTx,
-};
+use fifo_mempool::{mempool::{spawn_mempool_actor, MempoolConfig, MempoolMsg}, RawTx, ReapCursor};
 use libp2p_identity::Keypair;
 use libp2p_network::{network::spawn_mempool_network_actor, MempoolNetworkConfig};
 use ractor::ActorRef;
@@ -84,11 +81,11 @@ impl TestNode {
         }
     }
 
-    pub async fn get_transactions(&self) -> Vec<RawTx> {
-        // Get transactions from the mempool actor using Take message
+    pub async fn reap_transactions(&self, cursor: ReapCursor) -> Vec<RawTx> {
+        // Get transactions from the mempool actor using the Reap message
         let result = self
             .app_actor
-            .call(|reply| AppMsg::Take { reply }, None)
+            .call(|reply| AppMsg::Reap { cursor, reply }, None)
             .await;
         match result {
             Ok(txs) => {
@@ -101,5 +98,9 @@ impl TestNode {
                 vec![]
             }
         }
+    }
+
+    pub async fn get_transactions(&self) -> Vec<RawTx> {
+        self.reap_transactions(ReapCursor::Fresh).await
     }
 }

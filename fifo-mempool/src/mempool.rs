@@ -1,3 +1,4 @@
+use std::cmp::PartialEq;
 use {
     crate::{error::MempoolError, types::tx::TxHash, ActorResult, RawTx},
     libp2p_network::output_port::{OutputPort, OutputPortSubscriber},
@@ -5,10 +6,10 @@ use {
     serde::{Deserialize, Serialize},
     std::{
         cmp::min,
-        collections::{HashMap, HashSet, VecDeque},
         sync::Arc,
     },
     tracing::{debug, error, info, trace, warn, Span},
+    hashlink::LinkedHashMap,
 };
 
 // Placeholder types for external dependencies
@@ -56,22 +57,57 @@ pub type MempoolActorRef = ActorRef<Msg>;
 // Type alias
 type CheckTxReply = Option<Arc<RpcReplyPort<Result<Box<dyn crate::CheckTxOutcome>, MempoolError>>>>;
 
+#[derive(Debug, PartialEq)]
+enum IsReaped {
+    No,
+    Yes,
+}
+
+impl Default for IsReaped {
+    fn default() -> Self {
+        Self::No
+    }
+}
+
 #[derive(Default)]
 pub struct State {
     pub output_port: OutputPort<Arc<MempoolEvent>>,
-    pub txs: VecDeque<RawTx>,
-    pub tx_hashes: HashMap<TxHash, usize>,
+    txs: LinkedHashMap<TxHash, (RawTx, IsReaped)>,
 }
 
 impl State {
     pub fn exists(&self, tx: &TxHash) -> bool {
-        self.tx_hashes.contains_key(tx)
+        self.txs.contains_key(tx)
     }
 }
 
 #[derive(Clone)]
 pub enum Event {
     CheckTx { tx: RawTx, reply: CheckTxReply },
+}
+
+/// Cursor controlling how transactions are returned by a Reap request.
+///
+/// The cursor is provided as part of the `Msg::Reap` message to instruct the
+/// mempool where to start reading from:
+/// - `ReapCursor::Fresh` starts from the beginning of the mempool and resets any previously
+///   tracked position. It always returns the earliest available transactions,
+///   as if reaping for the first time.
+/// - `ReapCursor::Resume` continues after the most recently returned transaction from the
+///   last successful reap for the same caller/session. It does not return
+///   transactions that were previously returned.
+///
+/// Using `ReapCursor::Fresh` again resets what the next reap returns,
+/// so the next reap starts from the beginning of the mempool.
+#[derive(PartialEq)]
+pub enum ReapCursor {
+    Fresh,
+    Resume,
+}
+
+pub struct ReapResponse {
+    pub txs: Vec<RawTx>,
+    pub cursor: ReapCursor,
 }
 
 pub enum Msg {
@@ -86,7 +122,8 @@ pub enum Msg {
         result: Result<Box<dyn crate::CheckTxOutcome>, Box<dyn std::error::Error + Send + Sync>>,
         reply: CheckTxReply,
     },
-    Take {
+    Reap {
+        cursor: ReapCursor,
         reply: RpcReplyPort<Vec<RawTx>>,
     },
     Remove(Vec<TxHash>),
@@ -131,13 +168,21 @@ impl Mempool {
                 subscriber.subscribe_to_port(&state.output_port);
                 Ok(())
             }
-            Msg::NetworkEvent(event) => self.handle_network_event(myself, &event, state).await,
-            Msg::Add { tx, reply } => self.add_tx(myself, tx, state, Some(Arc::new(reply))).await,
+            Msg::NetworkEvent(event) => {
+                self.handle_network_event(myself, &event, state).await
+            },
+            Msg::Add { tx, reply } => {
+                self.add_tx(myself, tx, state, Some(Arc::new(reply))).await
+            },
             Msg::CheckTxResult { tx, result, reply } => {
                 self.handle_check_tx_result(tx, result, reply, state)
             }
-            Msg::Take { reply } => self.take(state, reply),
-            Msg::Remove(tx_hashes) => self.remove(tx_hashes, state),
+            Msg::Reap { cursor, reply } => {
+                self.reap(state, cursor, reply)
+            },
+            Msg::Remove(tx_hashes) => {
+                self.remove(tx_hashes, state)
+            },
         }
     }
 
@@ -228,8 +273,7 @@ impl Mempool {
                     }
                     // Add the transaction to the mempool
                     trace!("check_tx successful, tx is valid, adding tx to mempool");
-                    state.tx_hashes.insert(tx_hash.clone(), state.txs.len());
-                    state.txs.push_back(tx.clone());
+                    state.txs.insert(tx_hash.clone(), (tx.clone(), IsReaped::No));
 
                     // Only gossip if the transaction was received from the local endpoint
                     if reply.is_some() {
@@ -283,19 +327,29 @@ impl Mempool {
         Ok(())
     }
 
-    fn take(&self, state: &mut State, reply: RpcReplyPort<Vec<RawTx>>) -> ActorResult<()> {
-        debug!("take() with current mempool size: {}", state.txs.len());
+    fn reap(&self, state: &mut State, cursor: ReapCursor, reply: RpcReplyPort<Vec<RawTx>>) -> ActorResult<()> {
+        if cursor == ReapCursor::Fresh {
+            for (_, (_tx, is_reaped)) in state.txs.iter_mut() {
+                *is_reaped = IsReaped::No;
+            }
+        }
+
+        debug!("reap() with current mempool size: {}", state.txs.len());
         let mut txs = Vec::with_capacity(min(self.config.max_txs_per_block, state.txs.len()));
 
-        let mut max_tx_bytes = self.config.max_txs_bytes as usize;
+        let mut max_txs_bytes = self.config.max_txs_bytes as usize;
 
-        for tx in state.txs.iter() {
-            max_tx_bytes = max_tx_bytes.saturating_sub(tx.len());
-
-            if max_tx_bytes == 0 {
-                break;
+        for (_, (tx, is_reaped)) in state.txs.iter_mut() {
+            if *is_reaped == IsReaped::Yes {
+                continue;
             }
 
+            if max_txs_bytes < tx.len() {
+                break;
+            }
+            max_txs_bytes -= tx.len();
+
+            *is_reaped = IsReaped::Yes;
             txs.push(tx.clone());
         }
 
@@ -306,29 +360,11 @@ impl Mempool {
 
     #[tracing::instrument("remove", skip_all)]
     fn remove(&self, tx_hashes: Vec<TxHash>, state: &mut State) -> ActorResult<()> {
-        let mut ignore = HashSet::new();
         for tx_hash in tx_hashes {
-            if let Some(index) = state.tx_hashes.remove(&tx_hash) {
-                ignore.insert(index);
+            if let Some(tx) = state.txs.remove(&tx_hash) {
+                debug!("removing {:?} tx {:?} from mempool", tx_hash, tx);
             }
         }
-
-        debug!("removing {} txs from mempool", ignore.len());
-
-        let mut new_txs = VecDeque::with_capacity(state.txs.len() - ignore.len());
-        let mut new_hashes = HashMap::with_capacity(state.txs.len() - ignore.len());
-
-        let mut counter = 0;
-        for (hash, index) in state.tx_hashes.iter() {
-            if !ignore.contains(index) {
-                new_hashes.insert(hash.clone(), counter);
-                new_txs.push_back(state.txs[*index].clone());
-                counter += 1;
-            }
-        }
-
-        state.txs = new_txs;
-        state.tx_hashes = new_hashes;
 
         Ok(())
     }

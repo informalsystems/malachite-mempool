@@ -12,6 +12,7 @@ async-trait = "0.1.88"
 bytesize = "1.0"
 eyre = "0.6"
 futures = "0.3"
+hashlink = "0.10.0"
 libp2p             = { version = "0.56.0", features = ["macros", "identify", "tokio", "ed25519", "ecdsa", "tcp", "quic", "noise", "yamux", "gossipsub", "dns", "ping", "metrics", "request-response", "cbor", "serde", "kad"] }
 libp2p-gossipsub   = { version = "0.49.0", features = ["metrics"] }
 libp2p-identity = "0.2.12"

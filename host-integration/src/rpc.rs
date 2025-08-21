@@ -1,8 +1,7 @@
+use crate::app::{TestCheckTxOutcome, TestTx};
 use fifo_mempool::{error::MempoolError, ActorResult, Msg as MempoolMsg};
 use ractor::{async_trait, Actor, ActorRef};
 use thiserror::Error;
-
-use crate::app::{TestCheckTxOutcome, TestTx};
 
 #[derive(Clone, Debug, Error)]
 pub enum RpcError {
