@@ -1,7 +1,9 @@
+use bytesize::ByteSize;
 use host_integration::{config::HostMempoolConfig, node::TestNode};
 
-pub fn create_config(idx: usize, count: usize, base_port: u16) -> HostMempoolConfig {
+pub fn create_config(idx: usize, count: usize, base_port: u16, max_txs_bytes: ByteSize) -> HostMempoolConfig {
     let mut config = HostMempoolConfig::default();
+    config.max_txs_bytes = max_txs_bytes;
     config.p2p.listen_addr = format!("/ip4/127.0.0.1/tcp/{}", base_port + idx as u16)
         .parse()
         .unwrap();
@@ -19,11 +21,11 @@ pub fn create_config(idx: usize, count: usize, base_port: u16) -> HostMempoolCon
     config
 }
 
-pub async fn create_nodes(count: usize, base_port: u16) -> Vec<TestNode> {
+pub async fn create_nodes(count: usize, base_port: u16, max_txs_bytes: ByteSize) -> Vec<TestNode> {
     // Create test nodes with different ports
     let mut nodes: Vec<TestNode> = Vec::new();
     for i in 0..count {
-        let config = create_config(i, count, base_port);
+        let config = create_config(i, count, base_port, max_txs_bytes);
         nodes.push(TestNode::new(i, config).await);
         println!("Created node {i}");
     }
