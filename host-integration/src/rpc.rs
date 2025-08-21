@@ -1,8 +1,7 @@
+use crate::app::{TestCheckTxOutcome, TestTx};
 use fifo_mempool::{error::MempoolError, ActorResult, Msg as MempoolMsg};
 use ractor::{async_trait, Actor, ActorRef};
 use thiserror::Error;
-use tracing::info;
-use crate::app::{TestCheckTxOutcome, TestTx};
 
 #[derive(Clone, Debug, Error)]
 pub enum RpcError {
@@ -40,7 +39,6 @@ impl Rpc {
         Ok(actor_ref)
     }
     pub async fn add_tx(&self, actor_ref: &ActorRef<RpcMsg>, tx: TestTx) -> Result<(), RpcError> {
-        info!("About to send an RPC transaction to mempool: {:?}", tx);
         let raw_tx = tx.serialize();
         let tx_hash = tx.hash();
         // Send add message to the mempool actor using RPC call

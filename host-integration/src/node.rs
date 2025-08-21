@@ -85,7 +85,7 @@ impl TestNode {
         // Get transactions from the mempool actor using the Reap message
         let result = self
             .app_actor
-            .call(| reply| AppMsg::Reap { cursor, reply }, None)
+            .call(|reply| AppMsg::Reap { cursor, reply }, None)
             .await;
         match result {
             Ok(txs) => {

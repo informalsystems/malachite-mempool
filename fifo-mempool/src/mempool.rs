@@ -97,7 +97,8 @@ pub enum Event {
 ///   last successful reap for the same caller/session. It does not return
 ///   transactions that were previously returned.
 ///
-/// Calling `fresh()` again resets what the next reap returns, so the next reap starts from the beginning of the mempool.
+/// Using `ReapCursor::Fresh` again resets what the next reap returns,
+/// so the next reap starts from the beginning of the mempool.
 #[derive(PartialEq)]
 pub enum ReapCursor {
     Fresh,
@@ -359,7 +360,6 @@ impl Mempool {
 
     #[tracing::instrument("remove", skip_all)]
     fn remove(&self, tx_hashes: Vec<TxHash>, state: &mut State) -> ActorResult<()> {
-        // let mut ignore = HashSet::new();
         for tx_hash in tx_hashes {
             if let Some(tx) = state.txs.remove(&tx_hash) {
                 debug!("removing {:?} tx {:?} from mempool", tx_hash, tx);
